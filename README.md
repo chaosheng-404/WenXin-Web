@@ -20,12 +20,8 @@ npm run dev
 
 然后访问 `http://127.0.0.1:4173`。不要直接双击 `index.html`，浏览器的本地文件模式不支持完整的离线缓存行为。
 
-## 发布到 GitHub Pages
-
-1. 在 GitHub 新建一个空仓库。
-2. 将本项目提交并推送到仓库的 `main` 分支。
-3. 在仓库的 **Settings → Pages → Build and deployment** 中，将 Source 设为 **GitHub Actions**。
-4. 等待 `Deploy WenXin Web to GitHub Pages` 工作流完成。
+## 网页访问
+https://chaosheng-404.github.io/WenXin-Web/
 
 网站地址通常为 `https://你的用户名.github.io/仓库名/`。
 
