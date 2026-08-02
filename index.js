@@ -54,6 +54,7 @@ let dialog;
 let currentView = 'library';
 let workspace = createWorkspace();
 let selectedLayerId = null;
+let editingLayerId = null;
 let selectionText = '';
 let saveTimer;
 let assetPickerCallback;
@@ -441,6 +442,12 @@ function createDialog() {
             <div id="wx-overlay" class="wx-overlay" hidden></div>
         </div>`;
     document.body.append(dialog);
+    dialog.addEventListener('pointerdown', event => {
+        if (!editingLayerId) return;
+        const touchedEditable = event.target.closest('[data-layer-content]');
+        if (touchedEditable?.dataset.layerContent === editingLayerId) return;
+        finishTextLayerEditing();
+    }, true);
     dialog.addEventListener('click', handleClick);
     dialog.addEventListener('pointerdown', event => {
         if (!event.target.closest('.wx-inspector-backdrop')) return;
@@ -892,6 +899,7 @@ function renderStage() {
     const wrap = dialog?.querySelector('#wx-stage-wrap');
     const scroll = dialog?.querySelector('.wx-stage-scroll');
     if (!stage || !wrap || !scroll) return;
+    syncTextLayerEditing();
     const view = getStageView(scroll);
     stage.style.width = `${workspace.width}px`;
     stage.style.height = `${workspace.height}px`;
@@ -1143,9 +1151,11 @@ function layerHtml(layer) {
     const common = `left:${layer.x}px;top:${layer.y}px;width:${layer.width}px;height:${layer.height}px;z-index:${layer.z};opacity:${layer.visible === false ? 0.16 : layer.opacity};transform:rotate(${layer.rotation || 0}deg);border:${border};border-radius:${layer.borderRadius || 0}px;`;
     let body;
     if (layer.type === 'text') {
+        const isEditing = layer.id === editingLayerId;
         const displayContent = applyMaskRules(layer.content, layer.maskRules);
         const verticalPosition = layer.verticalAlign === 'middle' ? 'center' : layer.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start';
-        body = `<div class="wx-layer-text wx-md" contenteditable="true" role="textbox" aria-multiline="true" inputmode="text" spellcheck="false" title="直接点击文字编辑" style="font-family:${escapeHtml(layer.fontFamily)};font-size:${layer.fontSize}px;font-weight:${layer.fontWeight || 400};line-height:${layer.lineHeight || 1.45};color:${layer.color};text-align:${layer.align};text-indent:${layer.textIndent || 0}em;padding:${layer.padding || 0}px;writing-mode:${layer.writingMode || 'horizontal-tb'};justify-content:${verticalPosition};background:${layer.backgroundEnabled ? colorWithOpacity(layer.backgroundColor || '#ffffff', layer.backgroundOpacity ?? 1) : 'transparent'};" data-layer-content="${layer.id}">${layer.markdown ? markdown(displayContent) : escapeHtml(displayContent)}</div>`;
+        const textContent = isEditing ? escapeHtml(layer.content) : layer.markdown ? markdown(displayContent) : escapeHtml(displayContent);
+        body = `<div class="wx-layer-text wx-md" contenteditable="${isEditing}" role="textbox" aria-multiline="true" inputmode="text" spellcheck="false" title="${isEditing ? '正在编辑文字' : '点击铅笔按钮编辑文字'}" style="font-family:${escapeHtml(layer.fontFamily)};font-size:${layer.fontSize}px;font-weight:${layer.fontWeight || 400};line-height:${layer.lineHeight || 1.45};color:${layer.color};text-align:${layer.align};text-indent:${layer.textIndent || 0}em;padding:${layer.padding || 0}px;writing-mode:${layer.writingMode || 'horizontal-tb'};justify-content:${verticalPosition};background:${layer.backgroundEnabled ? colorWithOpacity(layer.backgroundColor || '#ffffff', layer.backgroundOpacity ?? 1) : 'transparent'};" data-layer-content="${layer.id}">${textContent}</div>`;
     } else if (layer.type === 'image') {
         if (layer.cropRect) body = croppedImageHtml(layer);
         else {
@@ -1154,7 +1164,10 @@ function layerHtml(layer) {
         }
     } else body = shapeSvg(layer);
     const resizeHandles = ['nw', 'ne', 'sw', 'se'].map(direction => `<button class="wx-resize-handle" data-resize-layer="${layer.id}" data-resize-direction="${direction}" title="拖动缩放"></button>`).join('');
-    return `<div class="wx-layer wx-layer-${layer.type}${selected}" data-layer-id="${layer.id}" style="${common}">${body}<div class="wx-layer-selection-frame" aria-hidden="true"></div><button class="wx-move-handle" data-move-layer="${layer.id}" title="拖动移动图层" aria-label="拖动移动图层"><i class="fa-solid fa-up-down-left-right"></i></button><div class="wx-layer-quick-actions">${layer.type === 'image' ? '<button data-action="crop-image" title="裁剪图片" aria-label="裁剪图片"><i class="fa-solid fa-crop-simple"></i></button>' : ''}<button data-action="merge-layers" title="与其他图层合并" aria-label="与其他图层合并"><i class="fa-solid fa-object-group"></i></button><button data-action="layer-down" title="下移图层" aria-label="下移图层"><i class="fa-solid fa-arrow-down"></i></button><button data-action="layer-up" title="上移图层" aria-label="上移图层"><i class="fa-solid fa-arrow-up"></i></button><button data-action="delete-layer" title="删除图层" aria-label="删除图层"><i class="fa-solid fa-trash"></i></button></div>${resizeHandles}</div>`;
+    const textEditAction = layer.type === 'text' ? layer.id === editingLayerId
+        ? '<button data-action="finish-text-edit" title="完成文字编辑" aria-label="完成文字编辑"><i class="fa-solid fa-check"></i></button>'
+        : '<button data-action="edit-text-layer" title="编辑文字" aria-label="编辑文字"><i class="fa-solid fa-pencil"></i></button>' : '';
+    return `<div class="wx-layer wx-layer-${layer.type}${selected}${layer.id === editingLayerId ? ' is-editing' : ''}" data-layer-id="${layer.id}" style="${common}">${body}<div class="wx-layer-selection-frame" aria-hidden="true"></div><button class="wx-move-handle" data-move-layer="${layer.id}" title="拖动移动图层" aria-label="拖动移动图层"><i class="fa-solid fa-up-down-left-right"></i></button><div class="wx-layer-quick-actions">${textEditAction}${layer.type === 'image' ? '<button data-action="crop-image" title="裁剪图片" aria-label="裁剪图片"><i class="fa-solid fa-crop-simple"></i></button>' : ''}<button data-action="merge-layers" title="与其他图层合并" aria-label="与其他图层合并"><i class="fa-solid fa-object-group"></i></button><button data-action="layer-down" title="下移图层" aria-label="下移图层"><i class="fa-solid fa-arrow-down"></i></button><button data-action="layer-up" title="上移图层" aria-label="上移图层"><i class="fa-solid fa-arrow-up"></i></button><button data-action="delete-layer" title="删除图层" aria-label="删除图层"><i class="fa-solid fa-trash"></i></button></div>${resizeHandles}</div>`;
 }
 
 function groupSelectionHtml() {
@@ -1173,43 +1186,56 @@ function renderMergeSelectionBar(scroll) {
     scroll.insertAdjacentHTML('beforeend', `<div class="wx-merge-mode-bar"><span><i class="fa-solid fa-hand-pointer"></i> 点击图层选择 <strong>${count}</strong> 项</span><button data-action="cancel-merge-layers" title="取消合并" aria-label="取消合并"><i class="fa-solid fa-xmark"></i></button><button class="is-confirm" data-action="confirm-merge-layers" title="完成合并" aria-label="完成合并" ${count < 2 ? 'disabled' : ''}><i class="fa-solid fa-check"></i></button></div>`);
 }
 
-function beginTextLayerTouch(element, editable, layer, event) {
-    if (!element.classList.contains('is-editing')) editable.textContent = layer.content;
-    const scale = Number(dialog.querySelector('#wx-stage').dataset.scale) || 1;
-    const start = { clientX: event.clientX, clientY: event.clientY, left: layer.x, top: layer.y };
-    let moved = false;
-    const move = moveEvent => {
-        const clientDx = moveEvent.clientX - start.clientX;
-        const clientDy = moveEvent.clientY - start.clientY;
-        if (!moved && Math.hypot(clientDx, clientDy) < 8) return;
-        if (!moved) {
-            moved = true;
-            editable.blur();
-            element.classList.add('is-dragging');
-            try { element.setPointerCapture(event.pointerId); } catch { /* The touch pointer can already be ending. */ }
-        }
-        moveEvent.preventDefault();
-        layer.x = Math.max(0, Math.min(workspace.width - layer.width, start.left + clientDx / scale));
-        layer.y = Math.max(0, Math.min(workspace.height - layer.height, start.top + clientDy / scale));
-        element.style.left = `${layer.x}px`;
-        element.style.top = `${layer.y}px`;
-    };
-    const end = endEvent => {
-        element.removeEventListener('pointermove', move);
-        element.removeEventListener('pointerup', end);
-        element.removeEventListener('pointercancel', end);
-        element.classList.remove('is-dragging');
-        if (!moved) return;
-        endEvent.preventDefault();
-        element.dataset.justDragged = 'true';
-        setTimeout(() => delete element.dataset.justDragged, 0);
-        touchActiveBooklet();
-        scheduleSave();
-        renderInspector();
-    };
-    element.addEventListener('pointermove', move);
-    element.addEventListener('pointerup', end);
-    element.addEventListener('pointercancel', end);
+function editingTextElements() {
+    if (!editingLayerId) return {};
+    const editable = [...(dialog?.querySelectorAll('[data-layer-content]') || [])]
+        .find(node => node.dataset.layerContent === editingLayerId && node.contentEditable === 'true');
+    return { editable, element: editable?.closest('.wx-layer'), layer: workspace.layers.find(item => item.id === editingLayerId) };
+}
+
+function syncTextLayerEditing() {
+    const { editable, layer } = editingTextElements();
+    if (editable && layer) layer.content = editable.innerText;
+}
+
+function finishTextLayerEditing() {
+    if (!editingLayerId) return;
+    const { editable, element, layer } = editingTextElements();
+    if (editable && layer) {
+        layer.content = editable.innerText;
+        const displayContent = applyMaskRules(layer.content, layer.maskRules);
+        editable.innerHTML = layer.markdown ? markdown(displayContent) : escapeHtml(displayContent);
+        editable.contentEditable = 'false';
+    }
+    editingLayerId = null;
+    element?.classList.remove('is-editing');
+    const editButton = element?.querySelector('[data-action="finish-text-edit"]');
+    if (editButton) {
+        editButton.dataset.action = 'edit-text-layer';
+        editButton.title = '编辑文字';
+        editButton.setAttribute('aria-label', '编辑文字');
+        editButton.innerHTML = '<i class="fa-solid fa-pencil"></i>';
+    }
+    touchActiveBooklet('text-edit');
+    scheduleSave();
+}
+
+function enterTextLayerEditing(id) {
+    if (editingLayerId && editingLayerId !== id) finishTextLayerEditing();
+    const layer = workspace.layers.find(item => item.id === id && item.type === 'text');
+    if (!layer) return;
+    selectedLayerId = id;
+    editingLayerId = id;
+    renderStage();
+    const { editable } = editingTextElements();
+    if (!editable) return;
+    editable.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(editable);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
 }
 
 function attachLayerPointer(element) {
@@ -1255,12 +1281,9 @@ function attachLayerPointer(element) {
         const resize = event.target.closest('[data-resize-layer]');
         const moveHandle = event.target.closest('[data-move-layer]');
         const quickAction = event.target.closest('.wx-layer-quick-actions');
-        if (editableTarget) {
-            if (event.pointerType === 'touch') beginTextLayerTouch(element, editableTarget, layer, event);
-            else if (!element.classList.contains('is-editing')) editableTarget.textContent = layer.content;
-            return;
-        }
-        if ((!wasSelected && !resize && !moveHandle) || quickAction) return;
+        if (editableTarget) return;
+        const canDirectTouchDrag = event.pointerType === 'touch' && layer.type === 'text';
+        if ((!wasSelected && !canDirectTouchDrag && !resize && !moveHandle) || quickAction) return;
         const scale = Number(dialog.querySelector('#wx-stage').dataset.scale) || 1;
         const start = { x: event.clientX, y: event.clientY, left: layer.x, top: layer.y, width: layer.width, height: layer.height };
         const resizeDirection = resize?.dataset.resizeDirection || 'se';
@@ -1329,16 +1352,12 @@ function attachLayerPointer(element) {
     }, true);
     const editable = element.querySelector('[contenteditable]');
     editable?.addEventListener('focus', () => {
-        element.classList.add('is-editing');
+        if (editingLayerId === element.dataset.layerId) element.classList.add('is-editing');
     });
     editable?.addEventListener('blur', () => {
         const layer = workspace.layers.find(item => item.id === element.dataset.layerId);
-        element.classList.remove('is-editing');
         if (!layer) return;
         layer.content = editable.innerText;
-        const displayContent = applyMaskRules(layer.content, layer.maskRules);
-        editable.innerHTML = layer.markdown ? markdown(displayContent) : escapeHtml(displayContent);
-        touchActiveBooklet();
         scheduleSave();
     });
 }
@@ -1969,6 +1988,8 @@ async function handleClick(event) {
     else if (action === 'align-layer') alignLayer(button.dataset.position);
     else if (action === 'align-text') alignText(button.dataset.position);
     else if (action === 'apply-text-style') applyTextStyle(button.dataset.style);
+    else if (action === 'edit-text-layer') enterTextLayerEditing(id || selectedLayerId);
+    else if (action === 'finish-text-edit') finishTextLayerEditing();
     else if (action === 'close-inspector') { setInspectorOpen(false); renderStage(); }
     else if (action === 'toggle-settings') { const shouldOpen = !inspectorOpen; setInspectorOpen(shouldOpen); if (shouldOpen) renderInspector(); renderStage(); }
     else if (action === 'reset-stage-view') resetStageView();
