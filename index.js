@@ -1173,6 +1173,45 @@ function renderMergeSelectionBar(scroll) {
     scroll.insertAdjacentHTML('beforeend', `<div class="wx-merge-mode-bar"><span><i class="fa-solid fa-hand-pointer"></i> 点击图层选择 <strong>${count}</strong> 项</span><button data-action="cancel-merge-layers" title="取消合并" aria-label="取消合并"><i class="fa-solid fa-xmark"></i></button><button class="is-confirm" data-action="confirm-merge-layers" title="完成合并" aria-label="完成合并" ${count < 2 ? 'disabled' : ''}><i class="fa-solid fa-check"></i></button></div>`);
 }
 
+function beginTextLayerTouch(element, editable, layer, event) {
+    if (!element.classList.contains('is-editing')) editable.textContent = layer.content;
+    const scale = Number(dialog.querySelector('#wx-stage').dataset.scale) || 1;
+    const start = { clientX: event.clientX, clientY: event.clientY, left: layer.x, top: layer.y };
+    let moved = false;
+    const move = moveEvent => {
+        const clientDx = moveEvent.clientX - start.clientX;
+        const clientDy = moveEvent.clientY - start.clientY;
+        if (!moved && Math.hypot(clientDx, clientDy) < 8) return;
+        if (!moved) {
+            moved = true;
+            editable.blur();
+            element.classList.add('is-dragging');
+            try { element.setPointerCapture(event.pointerId); } catch { /* The touch pointer can already be ending. */ }
+        }
+        moveEvent.preventDefault();
+        layer.x = Math.max(0, Math.min(workspace.width - layer.width, start.left + clientDx / scale));
+        layer.y = Math.max(0, Math.min(workspace.height - layer.height, start.top + clientDy / scale));
+        element.style.left = `${layer.x}px`;
+        element.style.top = `${layer.y}px`;
+    };
+    const end = endEvent => {
+        element.removeEventListener('pointermove', move);
+        element.removeEventListener('pointerup', end);
+        element.removeEventListener('pointercancel', end);
+        element.classList.remove('is-dragging');
+        if (!moved) return;
+        endEvent.preventDefault();
+        element.dataset.justDragged = 'true';
+        setTimeout(() => delete element.dataset.justDragged, 0);
+        touchActiveBooklet();
+        scheduleSave();
+        renderInspector();
+    };
+    element.addEventListener('pointermove', move);
+    element.addEventListener('pointerup', end);
+    element.addEventListener('pointercancel', end);
+}
+
 function attachLayerPointer(element) {
     element.addEventListener('pointerdown', event => {
         const layer = workspace.layers.find(item => item.id === element.dataset.layerId);
@@ -1216,7 +1255,11 @@ function attachLayerPointer(element) {
         const resize = event.target.closest('[data-resize-layer]');
         const moveHandle = event.target.closest('[data-move-layer]');
         const quickAction = event.target.closest('.wx-layer-quick-actions');
-        if (editableTarget) return;
+        if (editableTarget) {
+            if (event.pointerType === 'touch') beginTextLayerTouch(element, editableTarget, layer, event);
+            else if (!element.classList.contains('is-editing')) editableTarget.textContent = layer.content;
+            return;
+        }
         if ((!wasSelected && !resize && !moveHandle) || quickAction) return;
         const scale = Number(dialog.querySelector('#wx-stage').dataset.scale) || 1;
         const start = { x: event.clientX, y: event.clientY, left: layer.x, top: layer.y, width: layer.width, height: layer.height };
@@ -1286,9 +1329,7 @@ function attachLayerPointer(element) {
     }, true);
     const editable = element.querySelector('[contenteditable]');
     editable?.addEventListener('focus', () => {
-        const layer = workspace.layers.find(item => item.id === element.dataset.layerId);
         element.classList.add('is-editing');
-        if (layer) editable.textContent = layer.content;
     });
     editable?.addEventListener('blur', () => {
         const layer = workspace.layers.find(item => item.id === element.dataset.layerId);
