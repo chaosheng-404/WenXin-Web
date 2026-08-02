@@ -1,0 +1,11 @@
+{
+    "name": "文心网页",
+    "short_name": "文心",
+    "description": "保存在浏览器本地的摘录、排版、模板与册子工具。",
+    "lang": "zh-CN",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#f8f4ed",
+    "theme_color": "#a9523f"
+}
