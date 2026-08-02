@@ -70,6 +70,7 @@ let pendingComposerLeaveAction = null;
 let bookReaderResizeObserver = null;
 let pendingTemplateWorkspace = null;
 const stageViewStates = new WeakMap();
+const workspaceHistories = new WeakMap();
 const activeTagFilters = { gallery: null, template: null, booklet: null };
 const activeFolderIds = { gallery: null, template: null };
 const TAG_SCOPE_LABELS = { gallery: '图库', template: '模板库', booklet: '册子' };
@@ -102,6 +103,83 @@ function uid(prefix = 'wx') {
 
 function clone(value) {
     return structuredClone(value);
+}
+
+function workspaceSnapshot(target = workspace) {
+    return JSON.stringify(target);
+}
+
+function workspaceHistory(target = workspace) {
+    let history = workspaceHistories.get(target);
+    if (!history) {
+        history = { undo: [], redo: [], current: workspaceSnapshot(target), lastKey: null, lastAt: 0 };
+        workspaceHistories.set(target, history);
+    }
+    return history;
+}
+
+function commitWorkspaceHistory(coalesceKey = null) {
+    const history = workspaceHistory();
+    const next = workspaceSnapshot();
+    if (next === history.current) return;
+    const now = Date.now();
+    const coalescing = coalesceKey && history.lastKey === coalesceKey && now - history.lastAt < 900 && history.undo.length;
+    if (!coalescing) {
+        history.undo.push(history.current);
+        if (history.undo.length > 30) history.undo.shift();
+    }
+    history.current = next;
+    history.redo = [];
+    history.lastKey = coalesceKey;
+    history.lastAt = now;
+    updateHistoryButtons();
+}
+
+function restoreWorkspaceSnapshot(snapshot) {
+    const restored = JSON.parse(snapshot);
+    for (const key of Object.keys(workspace)) delete workspace[key];
+    Object.assign(workspace, restored);
+    if (!workspace.layers.some(layer => layer.id === selectedLayerId)) selectedLayerId = null;
+    mergeSelection = null;
+    stageViewStates.delete(workspace);
+    const booklet = getActiveBooklet();
+    if (booklet) {
+        bookletPreviewCache.delete(booklet.id);
+        booklet.updatedAt = Date.now();
+    }
+    scheduleSave();
+    render();
+}
+
+function undoWorkspace() {
+    const history = workspaceHistory();
+    const snapshot = history.undo.pop();
+    if (!snapshot) return notify('没有可撤销的操作。', 'info');
+    history.redo.push(history.current);
+    history.current = snapshot;
+    history.lastKey = null;
+    restoreWorkspaceSnapshot(snapshot);
+}
+
+function redoWorkspace() {
+    const history = workspaceHistory();
+    const snapshot = history.redo.pop();
+    if (!snapshot) return notify('没有可重做的操作。', 'info');
+    history.undo.push(history.current);
+    history.current = snapshot;
+    history.lastKey = null;
+    restoreWorkspaceSnapshot(snapshot);
+}
+
+function historyControlsHtml() {
+    const history = workspaceHistory();
+    return `<button data-action="undo-workspace" title="撤销" aria-label="撤销" ${history.undo.length ? '' : 'disabled'}><i class="fa-solid fa-arrow-rotate-left"></i></button><button data-action="redo-workspace" title="重做" aria-label="重做" ${history.redo.length ? '' : 'disabled'}><i class="fa-solid fa-arrow-rotate-right"></i></button>`;
+}
+
+function updateHistoryButtons() {
+    const history = workspaceHistory();
+    dialog?.querySelectorAll('[data-action="undo-workspace"]').forEach(button => button.disabled = history.undo.length === 0);
+    dialog?.querySelectorAll('[data-action="redo-workspace"]').forEach(button => button.disabled = history.redo.length === 0);
 }
 
 function createWorkspace(width = 720, height = 1080) {
@@ -367,7 +445,16 @@ function createDialog() {
     dialog.addEventListener('input', handleInput);
     dialog.addEventListener('change', handleChange);
     dialog.addEventListener('keydown', event => {
-        if (event.key === 'Enter' && event.target.matches('.wx-hex-color')) {
+        const isEditing = event.target.matches('input, textarea, select, [contenteditable="true"]');
+        const canEditWorkspace = currentView === 'composer' || currentView === 'booklet-editor';
+        if (canEditWorkspace && !isEditing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+            event.preventDefault();
+            if (event.shiftKey) redoWorkspace();
+            else undoWorkspace();
+        } else if (canEditWorkspace && !isEditing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+            event.preventDefault();
+            redoWorkspace();
+        } else if (event.key === 'Enter' && event.target.matches('.wx-hex-color')) {
             event.preventDefault();
             applyHexInput(event.target);
         } else if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('.wx-folder[data-action="open-folder"]')) {
@@ -566,7 +653,7 @@ function renderComposer() {
     return `<section class="wx-composer">
         <div class="wx-composer-top">
             <div><button class="wx-back-button" data-action="exit-composer" title="返回"><i class="fa-solid fa-arrow-left"></i><span>返回</span></button><strong>自由排版</strong><span>${workspace.width} × ${workspace.height}px</span></div>
-            <div><button data-action="undo-reset" title="清空画布"><i class="fa-solid fa-rotate-left"></i></button><button data-action="toggle-settings" title="画布设置"><i class="fa-solid fa-gear"></i></button></div>
+            <div>${historyControlsHtml()}<button data-action="undo-reset" title="清空画布" aria-label="清空画布"><i class="fa-solid fa-trash-can"></i></button><button data-action="toggle-settings" title="画布与图层设置"><i class="fa-solid fa-gear"></i></button></div>
         </div>
         <div class="wx-editor ${inspectorOpen ? 'has-inspector' : ''}">
             <div class="wx-stage-scroll"><div id="wx-stage-wrap" class="wx-stage-wrap"><div id="wx-stage" class="wx-stage"></div></div><button class="wx-stage-view-control" data-action="reset-stage-view" title="适应屏幕"><i class="fa-solid fa-expand"></i><span class="wx-stage-zoom-value">100%</span></button></div>
@@ -694,6 +781,7 @@ async function renderBookletPreviews() {
 }
 
 function getActiveBooklet() {
+    if (currentView !== 'booklet-editor') return null;
     return state.booklets.find(booklet => booklet.id === activeBookletId);
 }
 
@@ -739,7 +827,7 @@ function renderBookletComposer() {
     return `<section class="wx-composer wx-book-composer">
         <div class="wx-composer-top">
             <div><button class="wx-back-button" data-action="exit-booklet-editor"><i class="fa-solid fa-arrow-left"></i><span>返回书架</span></button><strong>${escapeHtml(booklet.name)}</strong><span>${booklet.pages.length} 页</span></div>
-            <div><button data-action="export-book-images" title="导出图片"><i class="fa-solid fa-images"></i></button><button data-action="export-book-pdf" title="导出 PDF"><i class="fa-solid fa-file-pdf"></i></button>${activePage ? '<button data-action="toggle-settings" title="页面设置"><i class="fa-solid fa-gear"></i></button>' : ''}</div>
+            <div>${activePage ? historyControlsHtml() : ''}<button data-action="export-book-images" title="导出图片"><i class="fa-solid fa-images"></i></button><button data-action="export-book-pdf" title="导出 PDF"><i class="fa-solid fa-file-pdf"></i></button>${activePage ? '<button data-action="toggle-settings" title="页面与图层设置"><i class="fa-solid fa-gear"></i></button>' : ''}</div>
         </div>
         <div class="wx-book-workbench">
             <aside class="wx-book-page-rail"><div class="wx-book-page-actions"><button data-action="book-new-page"><i class="fa-solid fa-file-circle-plus"></i><span>空白页</span></button><button data-action="book-add-template"><i class="fa-solid fa-layer-group"></i><span>模板</span></button><button data-action="book-add-gallery"><i class="fa-solid fa-images"></i><span>图库</span></button><label><i class="fa-solid fa-upload"></i><span>上传</span><input id="wx-book-upload" type="file" accept="image/*" multiple></label></div><div class="wx-book-page-list">${pageRail}</div></aside>
@@ -755,7 +843,7 @@ function makeTextLayer(text = '双击这里，写下你的文字。') {
         x: 60, y: 80 + workspace.layers.length * 24, width: Math.min(520, maxWidth), height: 180,
         z: workspace.layers.length + 1, opacity: 1, rotation: 0, fontFamily: 'serif', fontSize: 30, fontWeight: 400, lineHeight: 1.55, textStyle: 'body',
         color: '#332b26', align: 'left', verticalAlign: 'top', borderWidth: 0, borderStyle: 'solid', borderColor: '#332b26', borderOpacity: 1, borderRadius: 0,
-        padding: 20, backgroundEnabled: false, backgroundColor: '#ffffff', backgroundOpacity: 1, writingMode: 'horizontal-tb', priority: workspace.layers.filter(layer => layer.type === 'text').length + 1, visible: true,
+        padding: 20, textIndent: 0, backgroundEnabled: false, backgroundColor: '#ffffff', backgroundOpacity: 1, writingMode: 'horizontal-tb', priority: workspace.layers.filter(layer => layer.type === 'text').length + 1, visible: true,
     };
 }
 
@@ -942,9 +1030,9 @@ function clearLayerSelection() {
     if (mergeSelection) return;
     if (!selectedLayerId) return;
     selectedLayerId = null;
-    setInspectorOpen(false);
     dialog?.querySelectorAll('.wx-layer.is-selected, .wx-layer.is-group-member-selected').forEach(element => element.classList.remove('is-selected', 'is-group-member-selected'));
     dialog?.querySelector('.wx-group-selection')?.remove();
+    if (inspectorOpen) renderInspector();
 }
 
 function selectedLayer() {
@@ -1049,7 +1137,7 @@ function layerHtml(layer) {
     if (layer.type === 'text') {
         const displayContent = applyMaskRules(layer.content, layer.maskRules);
         const verticalPosition = layer.verticalAlign === 'middle' ? 'center' : layer.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start';
-        body = `<div class="wx-layer-text wx-md" contenteditable="true" spellcheck="false" title="直接点击文字编辑" style="font-family:${escapeHtml(layer.fontFamily)};font-size:${layer.fontSize}px;font-weight:${layer.fontWeight || 400};line-height:${layer.lineHeight || 1.45};color:${layer.color};text-align:${layer.align};padding:${layer.padding || 0}px;writing-mode:${layer.writingMode || 'horizontal-tb'};justify-content:${verticalPosition};background:${layer.backgroundEnabled ? colorWithOpacity(layer.backgroundColor || '#ffffff', layer.backgroundOpacity ?? 1) : 'transparent'};" data-layer-content="${layer.id}">${layer.markdown ? markdown(displayContent) : escapeHtml(displayContent)}</div>`;
+        body = `<div class="wx-layer-text wx-md" contenteditable="true" spellcheck="false" title="直接点击文字编辑" style="font-family:${escapeHtml(layer.fontFamily)};font-size:${layer.fontSize}px;font-weight:${layer.fontWeight || 400};line-height:${layer.lineHeight || 1.45};color:${layer.color};text-align:${layer.align};text-indent:${layer.textIndent || 0}em;padding:${layer.padding || 0}px;writing-mode:${layer.writingMode || 'horizontal-tb'};justify-content:${verticalPosition};background:${layer.backgroundEnabled ? colorWithOpacity(layer.backgroundColor || '#ffffff', layer.backgroundOpacity ?? 1) : 'transparent'};" data-layer-content="${layer.id}">${layer.markdown ? markdown(displayContent) : escapeHtml(displayContent)}</div>`;
     } else if (layer.type === 'image') {
         if (layer.cropRect) body = croppedImageHtml(layer);
         else {
@@ -1100,8 +1188,7 @@ function attachLayerPointer(element) {
         }
         const wasSelected = selectedLayers().some(item => item.id === layer.id);
         selectedLayerId = layer.id;
-        setInspectorOpen(true);
-        renderInspector();
+        if (inspectorOpen) renderInspector();
         if (isGroupedLayer(layer)) {
             const quickAction = event.target.closest('.wx-layer-quick-actions');
             if (!wasSelected) {
@@ -1318,6 +1405,7 @@ function renderInspector() {
         <label class="wx-span-2">字体<select data-layer-prop="fontFamily">${fontOptions(layer.fontFamily)}</select></label>
         <label>字号<input type="number" min="8" max="300" data-layer-prop="fontSize" value="${layer.fontSize}"></label>
         ${colorControl('layer', 'color', layer.color, '文字颜色')}
+        <label>首行缩进（字）<input type="number" min="0" max="10" step="0.5" data-layer-prop="textIndent" value="${layer.textIndent || 0}"></label>
         <label>文字方向<select data-layer-prop="writingMode"><option value="horizontal-tb" ${(layer.writingMode || 'horizontal-tb') === 'horizontal-tb' ? 'selected' : ''}>横排</option><option value="vertical-rl" ${layer.writingMode === 'vertical-rl' ? 'selected' : ''}>竖排</option></select></label>
         <label>替换优先级<input type="number" min="1" max="999" data-layer-prop="priority" value="${layer.priority || 1}"></label>
         <label class="wx-inline-check wx-span-2"><input type="checkbox" data-layer-prop="markdown" ${layer.markdown ? 'checked' : ''}> 启用 Markdown</label>
@@ -1375,7 +1463,7 @@ function readerLayerHtml(layer) {
     if (layer.type === 'text') {
         const displayContent = applyMaskRules(layer.content, layer.maskRules);
         const verticalPosition = layer.verticalAlign === 'middle' ? 'center' : layer.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start';
-        body = `<div class="wx-layer-text wx-md" style="font-family:${escapeHtml(layer.fontFamily)};font-size:${layer.fontSize}px;font-weight:${layer.fontWeight || 400};line-height:${layer.lineHeight || 1.45};color:${layer.color};text-align:${layer.align};padding:${layer.padding || 0}px;writing-mode:${layer.writingMode || 'horizontal-tb'};justify-content:${verticalPosition};background:${layer.backgroundEnabled ? colorWithOpacity(layer.backgroundColor || '#ffffff', layer.backgroundOpacity ?? 1) : 'transparent'};">${layer.markdown ? markdown(displayContent) : escapeHtml(displayContent)}</div>`;
+        body = `<div class="wx-layer-text wx-md" style="font-family:${escapeHtml(layer.fontFamily)};font-size:${layer.fontSize}px;font-weight:${layer.fontWeight || 400};line-height:${layer.lineHeight || 1.45};color:${layer.color};text-align:${layer.align};text-indent:${layer.textIndent || 0}em;padding:${layer.padding || 0}px;writing-mode:${layer.writingMode || 'horizontal-tb'};justify-content:${verticalPosition};background:${layer.backgroundEnabled ? colorWithOpacity(layer.backgroundColor || '#ffffff', layer.backgroundOpacity ?? 1) : 'transparent'};">${layer.markdown ? markdown(displayContent) : escapeHtml(displayContent)}</div>`;
     } else if (layer.type === 'image') {
         if (layer.cropRect) body = croppedImageHtml(layer);
         else {
@@ -1827,8 +1915,8 @@ async function handleClick(event) {
     else if (action === 'align-layer') alignLayer(button.dataset.position);
     else if (action === 'align-text') alignText(button.dataset.position);
     else if (action === 'apply-text-style') applyTextStyle(button.dataset.style);
-    else if (action === 'close-inspector') { selectedLayerId = null; setInspectorOpen(false); renderStage(); }
-    else if (action === 'toggle-settings') { const shouldOpen = !inspectorOpen || selectedLayerId !== null; selectedLayerId = null; setInspectorOpen(shouldOpen); if (shouldOpen) renderInspector(); renderStage(); }
+    else if (action === 'close-inspector') { setInspectorOpen(false); renderStage(); }
+    else if (action === 'toggle-settings') { const shouldOpen = !inspectorOpen; setInspectorOpen(shouldOpen); if (shouldOpen) renderInspector(); renderStage(); }
     else if (action === 'reset-stage-view') resetStageView();
     else if (action === 'exit-composer') requestComposerLeave(() => {
         selectedLayerId = null;
@@ -1838,6 +1926,8 @@ async function handleClick(event) {
     else if (action === 'layer-up') moveLayer(1);
     else if (action === 'layer-down') moveLayer(-1);
     else if (action === 'delete-layer') deleteLayer();
+    else if (action === 'undo-workspace') undoWorkspace();
+    else if (action === 'redo-workspace') redoWorkspace();
     else if (action === 'undo-reset') resetWorkspace();
     else if (action === 'export-menu') await exportModal();
     else if (action === 'save-template') templateSaveModal();
@@ -1894,7 +1984,7 @@ function handleInput(event) {
             dialog.querySelectorAll('.wx-text-style-presets button').forEach(button => button.classList.remove('is-active'));
         }
         renderStage();
-        touchActiveBooklet();
+        touchActiveBooklet(`layer:${selectedLayerId}:${prop}`);
         scheduleSave();
         return;
     }
@@ -1902,7 +1992,7 @@ function handleInput(event) {
     if (workspaceProp) {
         workspace[workspaceProp] = event.target.type === 'number' ? Math.max(240, Number(event.target.value)) : event.target.type === 'range' ? Number(event.target.value) : event.target.value;
         if (workspaceProp === 'backgroundImageFit') delete workspace.backgroundImageViewport;
-        touchActiveBooklet();
+        touchActiveBooklet(`workspace:${workspaceProp}`);
         renderStage();
         scheduleSave();
     }
@@ -1983,8 +2073,9 @@ function addQuotesToWorkspace(quotes) {
         workspace.layers.push(layer);
         selectedLayerId = layer.id;
     }
+    touchActiveBooklet();
     closeOverlay();
-    if (currentView === 'composer') { renderStage(); renderInspector(); }
+    if (currentView === 'composer') { renderStage(); if (inspectorOpen) renderInspector(); }
 }
 
 async function saveFont() {
@@ -2110,10 +2201,9 @@ function addText(text) {
     const layer = makeTextLayer(text);
     workspace.layers.push(layer);
     selectedLayerId = layer.id;
-    setInspectorOpen(true);
     touchActiveBooklet();
     renderStage();
-    renderInspector();
+    if (inspectorOpen) renderInspector();
 }
 
 function addImageToWorkspace(image) {
@@ -2121,11 +2211,10 @@ function addImageToWorkspace(image) {
     const layer = makeImageLayer(image);
     workspace.layers.push(layer);
     selectedLayerId = layer.id;
-    setInspectorOpen(true);
     touchActiveBooklet();
     closeOverlay();
     renderStage();
-    renderInspector();
+    if (inspectorOpen) renderInspector();
 }
 
 function shapeModal() {
@@ -2136,11 +2225,10 @@ function addShape(kind) {
     const layer = makeShapeLayer(kind);
     workspace.layers.push(layer);
     selectedLayerId = layer.id;
-    setInspectorOpen(true);
     touchActiveBooklet();
     closeOverlay();
     renderStage();
-    renderInspector();
+    if (inspectorOpen) renderInspector();
 }
 
 function chooseTextBackgroundImage() {
@@ -2191,11 +2279,10 @@ function addSmartText(kind) {
     layer.width = Math.min(420, Math.max(220, workspace.width - 120));
     workspace.layers.push(layer);
     selectedLayerId = layer.id;
-    setInspectorOpen(true);
     touchActiveBooklet();
     scheduleSave();
     renderStage();
-    renderInspector();
+    if (inspectorOpen) renderInspector();
     notify(`已创建${definition.name}文本框。`);
 }
 
@@ -2213,12 +2300,11 @@ function addTextBackgroundImage(textId, image) {
     ordered.forEach((item, index) => item.z = index + 1);
     workspace.layers = ordered;
     selectedLayerId = background.id;
-    setInspectorOpen(true);
     touchActiveBooklet();
     scheduleSave();
     closeOverlay();
     renderStage();
-    renderInspector();
+    if (inspectorOpen) renderInspector();
     notify('背景图片已作为独立图层添加到文字下方。');
 }
 
@@ -2468,7 +2554,6 @@ function deleteLayer() {
     if (!ids.size) return notify('请先选择一个图层。', 'warning');
     workspace.layers = workspace.layers.filter(layer => !ids.has(layer.id));
     selectedLayerId = null;
-    setInspectorOpen(false);
     touchActiveBooklet();
     renderStage(); renderInspector();
 }
@@ -2707,6 +2792,7 @@ function normaliseImportedWorkspace(source) {
             layer.fontSize = Math.max(8, Number(layer.fontSize) || 36);
             layer.fontWeight = Math.max(100, Math.min(900, Number(layer.fontWeight) || 400));
             layer.lineHeight = Math.max(0.8, Math.min(3, Number(layer.lineHeight) || 1.45));
+            layer.textIndent = Math.max(0, Math.min(10, Number(layer.textIndent) || 0));
             if (!Object.hasOwn(TEXT_STYLE_PRESETS, layer.textStyle)) delete layer.textStyle;
             const match = smartTextDefinition(layer);
             if (match) {
@@ -2799,11 +2885,13 @@ function addBookAssets(type) {
     }
 }
 
-function touchActiveBooklet() {
+function touchActiveBooklet(historyKey = null) {
+    commitWorkspaceHistory(historyKey);
     const booklet = getActiveBooklet();
-    if (!booklet) return;
-    bookletPreviewCache.delete(booklet.id);
-    booklet.updatedAt = Date.now();
+    if (booklet) {
+        bookletPreviewCache.delete(booklet.id);
+        booklet.updatedAt = Date.now();
+    }
     scheduleSave();
 }
 
@@ -2904,15 +2992,21 @@ function imageFromSource(source) {
     });
 }
 
-function wrapText(context, text, maxWidth) {
+function wrapText(context, text, maxWidth, indentWidth = 0) {
     const lines = [];
     for (const paragraph of String(text).replace(/\r/g, '').split('\n')) {
         let line = '';
+        let paragraphStart = true;
         for (const character of paragraph) {
-            if (context.measureText(line + character).width > maxWidth && line) { lines.push(line); line = character; }
+            const availableWidth = Math.max(1, maxWidth - (paragraphStart ? indentWidth : 0));
+            if (context.measureText(line + character).width > availableWidth && line) {
+                lines.push({ text: line, paragraphStart });
+                line = character;
+                paragraphStart = false;
+            }
             else line += character;
         }
-        lines.push(line || ' ');
+        lines.push({ text: line || ' ', paragraphStart });
     }
     return lines;
 }
@@ -3068,6 +3162,7 @@ async function workspaceToCanvas(sourceWorkspace, pixelRatio = 1) {
             context.textBaseline = 'top'; context.textAlign = layer.align || 'left';
             const maskedContent = applyMaskRules(layer.content, layer.maskRules);
             const plainText = layer.markdown ? plainMarkdown(maskedContent) : maskedContent;
+            const textIndent = Math.max(0, Number(layer.textIndent) || 0) * layer.fontSize;
             if (layer.writingMode === 'vertical-rl') {
                 context.textAlign = 'center';
                 const step = layer.fontSize * (layer.lineHeight || 1.35);
@@ -3075,22 +3170,27 @@ async function workspaceToCanvas(sourceWorkspace, pixelRatio = 1) {
                 const availableHeight = Math.max(0, layer.height - padding * 2);
                 const charactersPerColumn = Math.max(1, Math.floor(availableHeight / step));
                 const firstColumnLength = Math.min(charactersPerColumn, String(plainText).split('\n')[0].length);
-                const firstColumnHeight = firstColumnLength * step;
-                let y = layer.verticalAlign === 'middle' ? padding + Math.max(0, (availableHeight - firstColumnHeight) / 2) : layer.verticalAlign === 'bottom' ? layer.height - padding - firstColumnHeight : padding;
+                const firstColumnHeight = firstColumnLength * step + textIndent;
+                const baseY = layer.verticalAlign === 'middle' ? padding + Math.max(0, (availableHeight - firstColumnHeight) / 2) : layer.verticalAlign === 'bottom' ? layer.height - padding - firstColumnHeight : padding;
+                let y = baseY + textIndent;
                 for (const character of String(plainText)) {
-                    if (character === '\n' || y + layer.fontSize > layer.height - padding) { x -= step; y = padding; if (character === '\n') continue; }
+                    if (character === '\n' || y + layer.fontSize > layer.height - padding) { x -= step; y = padding + (character === '\n' ? textIndent : 0); if (character === '\n') continue; }
                     if (x < padding) break;
                     context.fillText(character, x, y);
                     y += step;
                 }
             } else {
-                const lines = wrapText(context, plainText, layer.width - padding * 2);
+                const lines = wrapText(context, plainText, layer.width - padding * 2, textIndent);
                 const x = layer.align === 'center' ? layer.width / 2 : layer.align === 'right' ? layer.width - padding : padding;
                 const lineHeight = layer.fontSize * (layer.lineHeight || 1.45);
                 const textHeight = lines.length * lineHeight;
                 const availableHeight = Math.max(0, layer.height - padding * 2);
                 const startY = layer.verticalAlign === 'middle' ? padding + Math.max(0, (availableHeight - textHeight) / 2) : layer.verticalAlign === 'bottom' ? Math.max(padding, layer.height - padding - textHeight) : padding;
-                lines.forEach((line, index) => context.fillText(line, x, startY + index * lineHeight));
+                lines.forEach((line, index) => {
+                    const indentOffset = line.paragraphStart ? textIndent : 0;
+                    const lineX = layer.align === 'right' ? x - indentOffset : layer.align === 'center' ? x + indentOffset / 2 : x + indentOffset;
+                    context.fillText(line.text, lineX, startY + index * lineHeight);
+                });
             }
         }
         context.restore();
