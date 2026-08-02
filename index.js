@@ -1145,7 +1145,7 @@ function layerHtml(layer) {
     if (layer.type === 'text') {
         const displayContent = applyMaskRules(layer.content, layer.maskRules);
         const verticalPosition = layer.verticalAlign === 'middle' ? 'center' : layer.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start';
-        body = `<div class="wx-layer-text wx-md" contenteditable="true" spellcheck="false" title="直接点击文字编辑" style="font-family:${escapeHtml(layer.fontFamily)};font-size:${layer.fontSize}px;font-weight:${layer.fontWeight || 400};line-height:${layer.lineHeight || 1.45};color:${layer.color};text-align:${layer.align};text-indent:${layer.textIndent || 0}em;padding:${layer.padding || 0}px;writing-mode:${layer.writingMode || 'horizontal-tb'};justify-content:${verticalPosition};background:${layer.backgroundEnabled ? colorWithOpacity(layer.backgroundColor || '#ffffff', layer.backgroundOpacity ?? 1) : 'transparent'};" data-layer-content="${layer.id}">${layer.markdown ? markdown(displayContent) : escapeHtml(displayContent)}</div>`;
+        body = `<div class="wx-layer-text wx-md" contenteditable="true" role="textbox" aria-multiline="true" inputmode="text" spellcheck="false" title="直接点击文字编辑" style="font-family:${escapeHtml(layer.fontFamily)};font-size:${layer.fontSize}px;font-weight:${layer.fontWeight || 400};line-height:${layer.lineHeight || 1.45};color:${layer.color};text-align:${layer.align};text-indent:${layer.textIndent || 0}em;padding:${layer.padding || 0}px;writing-mode:${layer.writingMode || 'horizontal-tb'};justify-content:${verticalPosition};background:${layer.backgroundEnabled ? colorWithOpacity(layer.backgroundColor || '#ffffff', layer.backgroundOpacity ?? 1) : 'transparent'};" data-layer-content="${layer.id}">${layer.markdown ? markdown(displayContent) : escapeHtml(displayContent)}</div>`;
     } else if (layer.type === 'image') {
         if (layer.cropRect) body = croppedImageHtml(layer);
         else {
@@ -1195,6 +1195,7 @@ function attachLayerPointer(element) {
             return;
         }
         const wasSelected = selectedLayers().some(item => item.id === layer.id);
+        const editableTarget = event.target.closest('[contenteditable="true"]');
         selectedLayerId = layer.id;
         if (inspectorOpen) renderInspector();
         if (isGroupedLayer(layer)) {
@@ -1203,6 +1204,7 @@ function attachLayerPointer(element) {
                 renderStage();
                 return;
             }
+            if (editableTarget) return;
             if (!quickAction) beginGroupTransform(element, event);
             return;
         }
@@ -1214,6 +1216,7 @@ function attachLayerPointer(element) {
         const resize = event.target.closest('[data-resize-layer]');
         const moveHandle = event.target.closest('[data-move-layer]');
         const quickAction = event.target.closest('.wx-layer-quick-actions');
+        if (editableTarget) return;
         if ((!wasSelected && !resize && !moveHandle) || quickAction) return;
         const scale = Number(dialog.querySelector('#wx-stage').dataset.scale) || 1;
         const start = { x: event.clientX, y: event.clientY, left: layer.x, top: layer.y, width: layer.width, height: layer.height };
@@ -1284,10 +1287,12 @@ function attachLayerPointer(element) {
     const editable = element.querySelector('[contenteditable]');
     editable?.addEventListener('focus', () => {
         const layer = workspace.layers.find(item => item.id === element.dataset.layerId);
+        element.classList.add('is-editing');
         if (layer) editable.textContent = layer.content;
     });
     editable?.addEventListener('blur', () => {
         const layer = workspace.layers.find(item => item.id === element.dataset.layerId);
+        element.classList.remove('is-editing');
         if (!layer) return;
         layer.content = editable.innerText;
         const displayContent = applyMaskRules(layer.content, layer.maskRules);

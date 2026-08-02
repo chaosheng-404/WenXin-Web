@@ -213,10 +213,10 @@ body { font-family: var(--mainFontFamily); }
 .wx-cropped-image-frame { position: absolute; overflow: hidden; }
 svg.wx-layer-shape { overflow: visible; pointer-events: none; }
 .wx-layer.wx-layer-shape { pointer-events: auto; cursor: pointer; }
-.wx-layer-text { display: flex; flex-direction: column; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; outline: 0; cursor: text; }
+.wx-layer-text { display: flex; flex-direction: column; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; outline: 0; cursor: text; touch-action: manipulation; -webkit-user-select: text; user-select: text; }
 .wx-layer.is-selected { z-index: 10001 !important; cursor: move; }
 .wx-layer.is-selected .wx-layer-text { cursor: move; }
-.wx-layer.is-selected .wx-layer-text:focus { cursor: text; }
+.wx-layer.is-selected .wx-layer-text:focus, .wx-layer.is-editing .wx-layer-text { cursor: text; touch-action: manipulation; -webkit-user-select: text; user-select: text; }
 .wx-layer.is-dragging, .wx-layer.is-dragging * { cursor: grabbing !important; user-select: none !important; }
 .wx-layer-text:focus { background: rgba(255,255,255,.12); }
 .wx-layer-text p { margin: 0 0 .65em; }
