@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wenxin-web-v1';
+const CACHE_NAME = 'wenxin-web-v2';
 const APP_SHELL = [
     './',
     './index.html',
@@ -6,6 +6,8 @@ const APP_SHELL = [
     './style.css',
     './site.webmanifest',
     './assets/fontawesome.min.css',
+    './assets/solid.min.css',
+    './assets/brands.min.css',
     './vendor/purify.min.js',
     './vendor/showdown.min.js',
     './webfonts/fa-solid-900.woff2',
