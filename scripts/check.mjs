@@ -11,6 +11,7 @@ for (const token of forbidden) {
 for (const token of ['textIndent', 'undoWorkspace()', 'redoWorkspace()', 'historyControlsHtml()', "action === 'toggle-settings'"]) {
     if (!source.includes(token)) throw new Error(`缺少编辑器功能：${token}`);
 }
+if (!source.includes('!hasFocusedTextEntry()')) throw new Error('移动端软键盘打开时仍可能重建画布并导致输入框失焦。');
 if (!styles.includes('.wx-layer.wx-layer-shape { pointer-events: auto;')) throw new Error('图形图层仍无法接收移动与缩放操作。');
 new Function(source);
 JSON.parse(await readFile('site.webmanifest', 'utf8'));

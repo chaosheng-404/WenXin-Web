@@ -3376,11 +3376,19 @@ async function exportBookPdf() {
     } catch (error) { notify(error.message, 'error'); }
 }
 
+function hasFocusedTextEntry() {
+    const activeElement = document.activeElement;
+    if (!dialog?.contains(activeElement)) return false;
+    return activeElement.matches('input, textarea, select, [contenteditable="true"]');
+}
+
 async function initialize() {
     try { await loadState(); } catch (error) { console.error('[文心] 数据库初始化失败', error); state = defaultState(); }
     await openApp();
     window.addEventListener('resize', () => {
-        if (dialog?.open && (currentView === 'composer' || currentView === 'booklet-editor')) renderStage();
+        // Opening a mobile soft keyboard fires resize. Rebuilding the stage here
+        // replaces its focused contenteditable node and immediately closes the keyboard.
+        if (dialog?.open && !hasFocusedTextEntry() && (currentView === 'composer' || currentView === 'booklet-editor')) renderStage();
         if (dialog?.querySelector('.wx-book-reader-stage')) renderBookReaderScale();
     });
     if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
