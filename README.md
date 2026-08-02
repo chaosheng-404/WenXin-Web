@@ -23,8 +23,6 @@ npm run dev
 ## 网页访问
 https://chaosheng-404.github.io/WenXin-Web/
 
-网站地址通常为 `https://你的用户名.github.io/仓库名/`。
-
 ## 与 SillyTavern 插件的关系
 
 本仓库由文心 SillyTavern 插件的源文件复制后独立改造。`plugin-source/` 保存了开始网页端开发时的完整插件源码快照；网页端的后续修改不会写回插件目录。
