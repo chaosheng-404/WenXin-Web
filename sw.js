@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wenxin-web-v3';
+const CACHE_NAME = 'wenxin-web-v6';
 const APP_SHELL = [
     './',
     './index.html',

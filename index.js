@@ -442,6 +442,13 @@ function createDialog() {
         </div>`;
     document.body.append(dialog);
     dialog.addEventListener('click', handleClick);
+    dialog.addEventListener('pointerdown', event => {
+        if (!event.target.closest('.wx-inspector-backdrop')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setInspectorOpen(false);
+        renderStage();
+    });
     dialog.addEventListener('input', handleInput);
     dialog.addEventListener('change', handleChange);
     dialog.addEventListener('keydown', event => {
@@ -657,6 +664,7 @@ function renderComposer() {
         </div>
         <div class="wx-editor ${inspectorOpen ? 'has-inspector' : ''}">
             <div class="wx-stage-scroll"><div id="wx-stage-wrap" class="wx-stage-wrap"><div id="wx-stage" class="wx-stage"></div></div><button class="wx-stage-view-control" data-action="reset-stage-view" title="适应屏幕"><i class="fa-solid fa-expand"></i><span class="wx-stage-zoom-value">100%</span></button></div>
+            <button type="button" class="wx-inspector-backdrop" data-action="close-inspector" aria-label="关闭设置"></button>
             <aside id="wx-inspector" class="wx-inspector ${inspectorOpen ? 'is-open' : ''}"></aside>
         </div>
         ${composerToolbar()}
@@ -823,7 +831,7 @@ function renderBookletComposer() {
         <button class="wx-page-to-template" data-action="book-page-to-template" data-id="${page.id}" title="添加本页到模板库" aria-label="添加本页到模板库"><i class="fa-solid fa-layer-group"></i></button>
         <button class="wx-page-delete" data-action="delete-book-page" data-id="${page.id}" title="删除本页"><i class="fa-solid fa-xmark"></i></button>
     </article>`).join('');
-    const editor = activePage ? `<div class="wx-editor ${inspectorOpen ? 'has-inspector' : ''}"><div class="wx-stage-scroll"><div id="wx-stage-wrap" class="wx-stage-wrap"><div id="wx-stage" class="wx-stage"></div></div><button class="wx-stage-view-control" data-action="reset-stage-view" title="适应屏幕"><i class="fa-solid fa-expand"></i><span class="wx-stage-zoom-value">100%</span></button></div><aside id="wx-inspector" class="wx-inspector ${inspectorOpen ? 'is-open' : ''}"></aside></div>${composerToolbar('<button class="wx-toolbar-primary" data-action="book-save-page"><i class="fa-solid fa-check"></i><span>完成本页</span></button>')}` : `<div class="wx-book-empty-editor">${emptyState('fa-file-circle-plus', '册子还没有页面', '从左侧新建空白页，或导入模板和图片。')}</div>`;
+    const editor = activePage ? `<div class="wx-editor ${inspectorOpen ? 'has-inspector' : ''}"><div class="wx-stage-scroll"><div id="wx-stage-wrap" class="wx-stage-wrap"><div id="wx-stage" class="wx-stage"></div></div><button class="wx-stage-view-control" data-action="reset-stage-view" title="适应屏幕"><i class="fa-solid fa-expand"></i><span class="wx-stage-zoom-value">100%</span></button></div><button type="button" class="wx-inspector-backdrop" data-action="close-inspector" aria-label="关闭设置"></button><aside id="wx-inspector" class="wx-inspector ${inspectorOpen ? 'is-open' : ''}"></aside></div>${composerToolbar('<button class="wx-toolbar-primary" data-action="book-save-page"><i class="fa-solid fa-check"></i><span>完成本页</span></button>')}` : `<div class="wx-book-empty-editor">${emptyState('fa-file-circle-plus', '册子还没有页面', '从左侧新建空白页，或导入模板和图片。')}</div>`;
     return `<section class="wx-composer wx-book-composer">
         <div class="wx-composer-top">
             <div><button class="wx-back-button" data-action="exit-booklet-editor"><i class="fa-solid fa-arrow-left"></i><span>返回书架</span></button><strong>${escapeHtml(booklet.name)}</strong><span>${booklet.pages.length} 页</span></div>
@@ -1393,7 +1401,7 @@ function renderInspector() {
     if (!inspector) return;
     const layer = workspace.layers.find(item => item.id === selectedLayerId);
     if (!layer) {
-        inspector.innerHTML = `<div class="wx-inspector-head"><strong>画布与图层</strong><button data-action="close-inspector"><i class="fa-solid fa-xmark"></i></button></div>
+        inspector.innerHTML = `<div class="wx-inspector-head"><strong>画布与图层</strong><button type="button" data-action="close-inspector" aria-label="关闭设置" title="关闭设置"><i class="fa-solid fa-xmark"></i></button></div>
             ${inspectorSection('快捷文本', `<div class="wx-quick-text-import wx-span-2"><div><button data-action="add-smart-text" data-kind="char"><i class="fa-solid fa-user-tag"></i><span>{{char}}</span></button><button data-action="add-smart-text" data-kind="user"><i class="fa-solid fa-user"></i><span>{{user}}</span></button><button data-action="add-smart-text" data-kind="date"><i class="fa-solid fa-calendar-day"></i><span>日期</span></button><button data-action="add-smart-text" data-kind="time"><i class="fa-solid fa-clock"></i><span>时间</span></button></div></div>`)}
             ${inspectorSection('纸张尺寸与颜色', `<label>宽度<input type="number" min="240" max="4000" data-workspace="width" value="${workspace.width}"></label><label>高度<input type="number" min="240" max="6000" data-workspace="height" value="${workspace.height}"></label><button class="wx-inspector-action wx-span-2" data-action="crop-workspace"><i class="fa-solid fa-crop-simple"></i> 裁切画布</button>${colorControl('workspace', 'background', workspace.background, '纸张颜色', 'wx-span-2')}<label class="wx-span-2">纸张颜色透明度<input type="range" min="0" max="1" step="0.05" data-workspace="backgroundOpacity" value="${workspace.backgroundOpacity ?? 1}"></label>`)}
             ${inspectorSection('纸张背景图', `<div class="wx-workspace-background wx-span-2"><span>纸张背景图</span>${workspace.backgroundImage ? `<img src="${escapeHtml(workspace.backgroundImage)}" alt="当前纸张背景图">` : '<small>尚未选择背景图片</small>'}<div><button data-action="workspace-background-image"><i class="fa-solid fa-images"></i> 从图库选择</button>${workspace.backgroundImage ? '<button data-action="remove-workspace-background-image"><i class="fa-solid fa-trash"></i> 移除</button>' : ''}</div></div><label class="wx-span-2">背景图填充<select data-workspace="backgroundImageFit"><option value="cover" ${(workspace.backgroundImageFit || 'cover') === 'cover' ? 'selected' : ''}>裁切铺满</option><option value="contain" ${workspace.backgroundImageFit === 'contain' ? 'selected' : ''}>完整显示</option><option value="fill" ${workspace.backgroundImageFit === 'fill' ? 'selected' : ''}>拉伸</option></select></label><label class="wx-span-2">背景图透明度<input type="range" min="0" max="1" step="0.05" data-workspace="backgroundImageOpacity" value="${workspace.backgroundImageOpacity ?? 1}"></label>`)}
@@ -1424,7 +1432,7 @@ function renderInspector() {
     const alignment = layer.type === 'text'
         ? `<div class="wx-paper-align wx-span-2"><span>文本框内文字对齐</span><div><button data-action="align-text" data-position="left" title="文字靠纸张左侧"><i class="fa-solid fa-align-left"></i></button><button data-action="align-text" data-position="center" title="文字水平居中"><i class="fa-solid fa-align-center"></i></button><button data-action="align-text" data-position="right" title="文字靠纸张右侧"><i class="fa-solid fa-align-right"></i></button><button data-action="align-text" data-position="top" title="文字靠纸张顶端"><i class="fa-solid fa-arrow-up-to-line"></i></button><button data-action="align-text" data-position="middle" title="文字垂直居中"><i class="fa-solid fa-arrows-up-down-to-line"></i></button><button data-action="align-text" data-position="bottom" title="文字靠纸张底端"><i class="fa-solid fa-arrow-down-to-line"></i></button></div></div>`
         : `<div class="wx-paper-align wx-span-2"><span>图层相对纸张对齐</span><div><button data-action="align-layer" data-position="left" title="纸张左对齐"><i class="fa-solid fa-align-left"></i></button><button data-action="align-layer" data-position="hcenter" title="纸张水平居中"><i class="fa-solid fa-arrows-left-right-to-line"></i></button><button data-action="align-layer" data-position="right" title="纸张右对齐"><i class="fa-solid fa-align-right"></i></button><button data-action="align-layer" data-position="top" title="纸张顶端对齐"><i class="fa-solid fa-arrow-up-to-line"></i></button><button data-action="align-layer" data-position="vcenter" title="纸张垂直居中"><i class="fa-solid fa-arrows-up-down-to-line"></i></button><button data-action="align-layer" data-position="bottom" title="纸张底端对齐"><i class="fa-solid fa-arrow-down-to-line"></i></button></div></div>`;
-    inspector.innerHTML = `<div class="wx-inspector-head"><div><strong>${escapeHtml(layer.name)}</strong><span>${layer.type === 'text' ? '文字图层' : layer.type === 'image' ? '图片图层' : '图形图层'}</span></div><button data-action="close-inspector"><i class="fa-solid fa-xmark"></i></button></div>
+    inspector.innerHTML = `<div class="wx-inspector-head"><div><strong>${escapeHtml(layer.name)}</strong><span>${layer.type === 'text' ? '文字图层' : layer.type === 'image' ? '图片图层' : '图形图层'}</span></div><button type="button" data-action="close-inspector" aria-label="关闭设置" title="关闭设置"><i class="fa-solid fa-xmark"></i></button></div>
         ${inspectorSection(layer.type === 'text' ? '文字样式' : layer.type === 'image' ? '图片设置' : '图形样式', typeFields)}
         ${inspectorSection('对齐与位置', `${alignment}<label>透明度<input type="range" min="0" max="1" step="0.05" data-layer-prop="opacity" value="${layer.opacity}"></label><label>旋转<input type="number" min="-360" max="360" data-layer-prop="rotation" value="${layer.rotation || 0}"></label>`)}
         ${borderFields ? inspectorSection('边框与圆角', borderFields, false) : ''}`;
